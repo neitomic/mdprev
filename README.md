@@ -12,7 +12,7 @@ cargo build --release
 - **Explorer navigation** — browse directories, open files, follow relative links between docs. Breadcrumbs on every page.
 - **Live reload** — edits appear instantly; scroll position is preserved (only the article body is swapped).
 - **GitHub-flavored markdown** — tables, task lists, footnotes, strikethrough, and GitHub-style alerts (`> [!NOTE]`).
-- **Syntax highlighting** — server-side via syntect, with light/dark themes that follow your system.
+- **Light and dark themes** — follows your system by default; use the theme button in the header to choose and remember a preference. Syntax highlighting and Mermaid diagrams follow it too.
 - **Mermaid diagrams** — ` ```mermaid ` blocks, rendered client-side. The bundle is embedded and lazy-loaded (only on pages that use it).
 - **ASCII diagrams** — ` ```bob `, ` ```svgbob `, or ` ```ascii ` blocks are rendered to SVG server-side.
 

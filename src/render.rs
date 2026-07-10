@@ -117,7 +117,8 @@ fn write_tag(
 
 pub struct Renderer {
     syntax_set: SyntaxSet,
-    pub syntax_css: String,
+    pub syntax_light_css: String,
+    pub syntax_dark_css: String,
 }
 
 impl Renderer {
@@ -128,9 +129,11 @@ impl Renderer {
             .unwrap_or_default();
         let dark = css_for_theme_with_class_style(&themes.themes["base16-ocean.dark"], CLASS_STYLE)
             .unwrap_or_default();
-        let syntax_css =
-            format!("{light}\n@media (prefers-color-scheme: dark) {{\n{dark}\n}}\n");
-        Self { syntax_set, syntax_css }
+        Self {
+            syntax_set,
+            syntax_light_css: light,
+            syntax_dark_css: dark,
+        }
     }
 
     pub fn render(&self, markdown: &str) -> String {
@@ -174,12 +177,15 @@ pub fn page(title: &str, breadcrumbs: &str, body: &str, watch_path: &str, kind: 
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
+<script>(function(){{try{{var t=localStorage.getItem('mdprev-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}}catch(e){{}}}})()</script>
 <link rel="stylesheet" href="/__assets/app.css">
-<link rel="stylesheet" href="/__assets/syntax.css">
+<link rel="stylesheet" href="/__assets/syntax-light.css">
+<link id="syntax-dark-theme" rel="stylesheet" href="/__assets/syntax-dark.css" media="(prefers-color-scheme: dark)">
+<script>(function(){{var t=document.documentElement.dataset.theme,s=document.getElementById('syntax-dark-theme');if(s&&t)s.media=t==='dark'?'all':'not all'}})()</script>
 <script src="/__assets/app.js" defer></script>
 </head>
 <body data-path="{path}" data-kind="{kind}">
-<nav class="crumbs">{breadcrumbs}</nav>
+<nav class="crumbs"><span class="crumb-trail">{breadcrumbs}</span><button class="theme-toggle" type="button" aria-label="Toggle color theme" title="Toggle color theme"><span aria-hidden="true">◐</span></button></nav>
 <main class="markdown-body">
 {body}
 </main>

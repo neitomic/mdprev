@@ -3,10 +3,44 @@
   const body = document.body;
   const watchPath = body.dataset.path || "";
   const kind = body.dataset.kind || "file";
+  const themeToggle = document.querySelector(".theme-toggle");
+  const syntaxDarkTheme = document.querySelector("#syntax-dark-theme");
   let mermaidLoaded = false;
 
+  function preference() {
+    try {
+      const value = localStorage.getItem("mdprev-theme");
+      return value === "light" || value === "dark" ? value : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   function isDark() {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    const selected = preference();
+    return selected ? selected === "dark" : window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+
+  function applyTheme(theme) {
+    if (theme) document.documentElement.dataset.theme = theme;
+    else delete document.documentElement.dataset.theme;
+    if (syntaxDarkTheme) {
+      syntaxDarkTheme.media = theme === "dark" ? "all" : theme === "light" ? "not all" : "(prefers-color-scheme: dark)";
+    }
+    if (themeToggle) {
+      const next = isDark() ? "light" : "dark";
+      themeToggle.setAttribute("aria-label", `Switch to ${next} theme`);
+      themeToggle.setAttribute("title", `Switch to ${next} theme`);
+      themeToggle.firstElementChild.textContent = isDark() ? "☀" : "◐";
+    }
+  }
+
+  function toggleTheme() {
+    const next = isDark() ? "light" : "dark";
+    try {
+      localStorage.setItem("mdprev-theme", next);
+    } catch (_) {}
+    applyTheme(next);
   }
 
   // Lazily load the embedded mermaid bundle, only when a diagram exists.
@@ -93,6 +127,8 @@
     };
   }
 
+  applyTheme(preference());
+  themeToggle?.addEventListener("click", toggleTheme);
   renderMermaid();
   connect();
 })();

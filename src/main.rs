@@ -6,19 +6,19 @@ use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Router;
 use axum::extract::{Path, Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::{StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
 use clap::Parser;
 use notify::RecursiveMode;
 use notify_debouncer_mini::new_debouncer;
-use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::{BroadcastStream, WatchStream};
 
-use render::{escape_html, page, Renderer};
+use render::{Renderer, escape_html, page};
 
 #[derive(Parser)]
 #[command(name = "mdprev", about = "Fast local markdown preview server")]
@@ -40,6 +40,7 @@ struct AppState {
     root: PathBuf,
     renderer: Renderer,
     tx: tokio::sync::broadcast::Sender<String>,
+    shutdown: tokio::sync::watch::Receiver<bool>,
     quiet: bool,
 }
 
@@ -60,10 +61,12 @@ async fn main() {
     }
 
     let (tx, _) = tokio::sync::broadcast::channel::<String>(64);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let state = Arc::new(AppState {
         root: root.clone(),
         renderer: Renderer::new(),
         tx: tx.clone(),
+        shutdown: shutdown_rx,
         quiet: args.quiet,
     });
 
@@ -85,8 +88,9 @@ async fn main() {
     }
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(async {
+        .with_graceful_shutdown(async move {
             let _ = tokio::signal::ctrl_c().await;
+            let _ = shutdown_tx.send(true);
         })
         .await
         .unwrap();
@@ -235,7 +239,9 @@ async fn render_dir(state: &AppState, dir: &FsPath, rel: &str) -> Response {
                 Err(_) => continue,
             };
             if ft.is_dir() {
-                dirs.push(name);
+                if directory_has_markdown(&entry.path()).await {
+                    dirs.push(name);
+                }
             } else if is_markdown(&name) {
                 if matches!(name.to_ascii_lowercase().as_str(), "readme.md" | "index.md") {
                     readme = Some(entry.path());
@@ -295,6 +301,35 @@ fn is_markdown(name: &str) -> bool {
     lower.ends_with(".md") || lower.ends_with(".markdown")
 }
 
+/// Return whether `dir` contains a visible Markdown file at any depth. This
+/// keeps the directory explorer from linking to dead-end folders while still
+/// preserving the path to files in nested folders.
+async fn directory_has_markdown(dir: &FsPath) -> bool {
+    let mut pending = vec![dir.to_path_buf()];
+
+    while let Some(current) = pending.pop() {
+        let Ok(mut entries) = tokio::fs::read_dir(current).await else {
+            continue;
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            let Ok(file_type) = entry.file_type().await else {
+                continue;
+            };
+            if file_type.is_dir() {
+                pending.push(entry.path());
+            } else if file_type.is_file() && is_markdown(&name) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 /// Build the breadcrumb trail. Intermediate segments link to their directory;
 /// the final segment of a file page is plain text.
 fn breadcrumbs(rel: &str, is_dir: bool) -> String {
@@ -341,14 +376,19 @@ fn not_found(rel: &str) -> Response {
 }
 
 async fn assets(State(state): State<Arc<AppState>>, Path(file): Path<String>) -> Response {
-    // syntax.css depends on the loaded theme, so it is generated at runtime.
-    if file == "syntax.css" {
+    // Syntax styles are separated so the browser can switch them with the UI theme.
+    if file == "syntax-light.css" || file == "syntax-dark.css" {
+        let css = if file == "syntax-light.css" {
+            &state.renderer.syntax_light_css
+        } else {
+            &state.renderer.syntax_dark_css
+        };
         return (
             [
                 (header::CONTENT_TYPE, "text/css"),
                 (header::CACHE_CONTROL, "public, max-age=3600"),
             ],
-            state.renderer.syntax_css.clone(),
+            css.clone(),
         )
             .into_response();
     }
@@ -379,14 +419,30 @@ async fn events(
     Query(params): Query<HashMap<String, String>>,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, Infallible>>> {
     let sub = params.get("path").cloned().unwrap_or_default();
-    let rx = state.tx.subscribe();
-    let stream = BroadcastStream::new(rx).filter_map(move |msg| match msg {
-        Ok(changed) if path_matches(&sub, &changed) => {
-            Some(Ok(Event::default().event("change").data(changed)))
-        }
-        _ => None,
-    });
+    let stream = event_stream(sub, state.tx.subscribe(), state.shutdown.clone());
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+fn event_stream(
+    sub: String,
+    rx: tokio::sync::broadcast::Receiver<String>,
+    shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> impl tokio_stream::Stream<Item = Result<Event, Infallible>> {
+    let changes = BroadcastStream::new(rx)
+        .filter_map(move |msg| match msg {
+            Ok(changed) if path_matches(&sub, &changed) => {
+                Some(Ok(Event::default().event("change").data(changed)))
+            }
+            _ => None,
+        })
+        .map(Some);
+    let shutdown = WatchStream::new(shutdown_rx)
+        .filter(|shutting_down| *shutting_down)
+        .map(|_| None);
+    changes
+        .merge(shutdown)
+        .take_while(Option::is_some)
+        .filter_map(|event| event)
 }
 
 /// A subscriber to `sub` cares about a change to `changed` when it is the same
@@ -394,4 +450,43 @@ async fn events(
 /// root index and matches everything.
 fn path_matches(sub: &str, changed: &str) -> bool {
     sub.is_empty() || changed == sub || changed.starts_with(&format!("{sub}/"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn event_stream_ends_on_shutdown() {
+        let (event_tx, event_rx) = tokio::sync::broadcast::channel(1);
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let stream = event_stream(String::new(), event_rx, shutdown_rx);
+        tokio::pin!(stream);
+
+        shutdown_tx.send(true).unwrap();
+
+        assert!(stream.next().await.is_none());
+        drop(event_tx);
+    }
+
+    #[tokio::test]
+    async fn directory_has_markdown_skips_empty_branches() {
+        let root = std::env::temp_dir().join(format!(
+            "mdprev-directory-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let empty = root.join("empty");
+        let nested = root.join("nested/docs");
+        std::fs::create_dir_all(&empty).unwrap();
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("guide.md"), "# Guide").unwrap();
+
+        assert!(!directory_has_markdown(&empty).await);
+        assert!(directory_has_markdown(&root.join("nested")).await);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
