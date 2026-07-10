@@ -43,6 +43,7 @@ Everything except Mermaid renders server-side. The page works with JS disabled (
  browser ◄──────►│  axum router                             │
    ▲             │   ├── GET /{path}      → render pipeline │
    │  SSE        │   ├── GET /__events    → reload bus      │
+   │             │   ├── GET /__files     → Markdown file index │
    └─────────────│   └── GET /__assets/*  → embedded assets │
                  │                                          │
                  │  notify watcher ──► broadcast channel ───┼──► SSE clients
@@ -68,6 +69,7 @@ The served directory browses like a file explorer:
 - **Cross-doc links**: relative links between markdown files (`[other](../other.md)`, `[sub](guide/setup.md)`) resolve to their rendered pages, since URLs mirror file paths 1:1 — no link rewriting needed. Links ending in `.md#some-heading` land on the heading anchor. Absolute `http(s)://` links open externally, untouched.
 - `GET /__assets/{app.css,app.js,mermaid.min.js}` → embedded, `Cache-Control: immutable`, content-hashed names.
 - `GET /__events?path=...` → SSE stream.
+- `GET /__files` → visible Markdown files beneath the served root, used by the local <kbd>⌘K</kbd>/<kbd>Ctrl+K</kbd> file finder.
 
 Path resolution canonicalizes and verifies the result is inside the root dir — rejects `../` traversal with 404.
 
@@ -97,6 +99,7 @@ Why SSE over WebSocket: one-directional is all we need, auto-reconnect is built 
 ### Frontend
 
 - One handwritten CSS file (~GitHub-markdown look): responsive `max-width: 860px` article, `prefers-color-scheme` dark/light, print stylesheet.
+- A small picker opened with <kbd>⌘K</kbd>/<kbd>Ctrl+K</kbd> fetches the local file index once, ranks fuzzy filename/path matches in the browser, and opens the selected result on Enter.
 - Mermaid theme follows the color scheme (`theme: dark/default` chosen at init).
 - No framework, no build step. The only third-party asset is `mermaid.min.js` (~2.5 MB), embedded at compile time and served gzipped (~700 KB over the wire, cached immutable). It's loaded lazily — only on pages that actually contain a mermaid block.
 

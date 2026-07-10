@@ -6,12 +6,12 @@ use std::path::{Path as FsPath, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::get;
+use axum::{Json, Router};
 use clap::Parser;
 use notify::RecursiveMode;
 use notify_debouncer_mini::new_debouncer;
@@ -75,6 +75,7 @@ async fn main() {
     let app = Router::new()
         .route("/__assets/{*file}", get(assets))
         .route("/__events", get(events))
+        .route("/__files", get(files))
         .route("/", get(serve_root))
         .route("/{*path}", get(serve_path))
         .with_state(state);
@@ -153,6 +154,11 @@ async fn serve_root(State(state): State<Arc<AppState>>) -> Response {
 
 async fn serve_path(State(state): State<Arc<AppState>>, Path(path): Path<String>) -> Response {
     serve(&state, &path).await
+}
+
+/// List every visible Markdown file under the served root for the file picker.
+async fn files(State(state): State<Arc<AppState>>) -> Json<Vec<String>> {
+    Json(markdown_files(&state.root).await)
 }
 
 async fn serve(state: &AppState, rel: &str) -> Response {
@@ -301,6 +307,38 @@ fn is_markdown(name: &str) -> bool {
     lower.ends_with(".md") || lower.ends_with(".markdown")
 }
 
+/// Find Markdown files recursively, using root-relative `/` paths so the
+/// result can be opened directly by the browser on every platform.
+async fn markdown_files(root: &FsPath) -> Vec<String> {
+    let mut files = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+
+    while let Some(dir) = pending.pop() {
+        let Ok(mut entries) = tokio::fs::read_dir(dir).await else {
+            continue;
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            let Ok(file_type) = entry.file_type().await else {
+                continue;
+            };
+            if file_type.is_dir() {
+                pending.push(entry.path());
+            } else if file_type.is_file() && is_markdown(&name) {
+                if let Some(path) = rel_path(root, &entry.path()) {
+                    files.push(path);
+                }
+            }
+        }
+    }
+
+    files.sort();
+    files
+}
+
 /// Return whether `dir` contains a visible Markdown file at any depth. This
 /// keeps the directory explorer from linking to dead-end folders while still
 /// preserving the path to files in nested folders.
@@ -386,7 +424,7 @@ async fn assets(State(state): State<Arc<AppState>>, Path(file): Path<String>) ->
         return (
             [
                 (header::CONTENT_TYPE, "text/css"),
-                (header::CACHE_CONTROL, "public, max-age=3600"),
+                (header::CACHE_CONTROL, "no-cache"),
             ],
             css.clone(),
         )
@@ -407,7 +445,7 @@ async fn assets(State(state): State<Arc<AppState>>, Path(file): Path<String>) ->
     (
         [
             (header::CONTENT_TYPE, mime),
-            (header::CACHE_CONTROL, "public, max-age=3600"),
+            (header::CACHE_CONTROL, "no-cache"),
         ],
         bytes,
     )
@@ -486,6 +524,29 @@ mod tests {
 
         assert!(!directory_has_markdown(&empty).await);
         assert!(directory_has_markdown(&root.join("nested")).await);
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn markdown_files_lists_visible_files_recursively() {
+        let root = std::env::temp_dir().join(format!(
+            "mdprev-files-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("guides/.drafts")).unwrap();
+        std::fs::write(root.join("README.md"), "# Root").unwrap();
+        std::fs::write(root.join("guides/setup.markdown"), "# Setup").unwrap();
+        std::fs::write(root.join("guides/.drafts/hidden.md"), "# Hidden").unwrap();
+        std::fs::write(root.join("notes.txt"), "not markdown").unwrap();
+
+        assert_eq!(
+            markdown_files(&root).await,
+            vec!["README.md", "guides/setup.markdown"]
+        );
 
         std::fs::remove_dir_all(root).unwrap();
     }

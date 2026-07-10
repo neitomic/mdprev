@@ -10,6 +10,133 @@
   let mermaidObserver = null;
   let eventSource = null;
   let reconnectTimer = null;
+  let fileIndexPromise = null;
+  let filePicker = null;
+  let pickerInput = null;
+  let pickerResults = null;
+  let pickerMatches = [];
+  let pickerSelection = 0;
+
+  function fuzzyScore(path, query) {
+    const needle = query.toLocaleLowerCase().replaceAll(/\s+/g, "");
+    if (!needle) return 0;
+
+    const haystack = path.toLocaleLowerCase();
+    const filename = haystack.slice(haystack.lastIndexOf("/") + 1);
+    let score = 0;
+    let index = -1;
+    let previous = -2;
+    for (const character of needle) {
+      index = haystack.indexOf(character, index + 1);
+      if (index === -1) return null;
+      score += index === previous + 1 ? 8 : 1;
+      if (index === 0 || haystack[index - 1] === "/" || haystack[index - 1] === "-" || haystack[index - 1] === "_") score += 4;
+      previous = index;
+    }
+    if (filename.startsWith(needle)) score += 30;
+    else if (filename.includes(needle)) score += 15;
+    return score - haystack.length / 100;
+  }
+
+  function loadFileIndex() {
+    if (!fileIndexPromise) {
+      fileIndexPromise = fetch("/__files", { cache: "no-store" }).then((response) => {
+        if (!response.ok) throw new Error(`file index: ${response.status}`);
+        return response.json();
+      });
+    }
+    return fileIndexPromise;
+  }
+
+  function closeFilePicker() {
+    filePicker?.remove();
+    filePicker = null;
+    pickerInput = null;
+    pickerResults = null;
+    pickerMatches = [];
+  }
+
+  function openFile(path) {
+    location.assign("/" + path.split("/").map(encodeURIComponent).join("/"));
+  }
+
+  function setPickerSelection(index, reveal = false) {
+    if (!pickerMatches.length) return;
+    pickerSelection = (index + pickerMatches.length) % pickerMatches.length;
+    const buttons = pickerResults?.querySelectorAll(".file-picker-result");
+    buttons?.forEach((button, resultIndex) => {
+      const selected = resultIndex === pickerSelection;
+      button.classList.toggle("is-selected", selected);
+      button.setAttribute("aria-selected", String(selected));
+    });
+    if (reveal) buttons?.[pickerSelection]?.scrollIntoView({ block: "nearest" });
+  }
+
+  function renderFileMatches() {
+    if (!pickerResults || !pickerInput) return;
+    const query = pickerInput.value.trim();
+    pickerMatches = (filePicker.files || [])
+      .map((path) => ({ path, score: fuzzyScore(path, query) }))
+      .filter((match) => match.score !== null)
+      .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+      .slice(0, 50);
+    pickerSelection = Math.min(pickerSelection, Math.max(pickerMatches.length - 1, 0));
+
+    pickerResults.replaceChildren();
+    if (pickerMatches.length === 0) {
+      const empty = document.createElement("li");
+      empty.className = "file-picker-empty";
+      empty.textContent = "No matching files";
+      pickerResults.appendChild(empty);
+      return;
+    }
+    pickerMatches.forEach((match, index) => {
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "file-picker-result";
+      button.classList.toggle("is-selected", index === pickerSelection);
+      button.setAttribute("aria-selected", String(index === pickerSelection));
+      button.textContent = match.path;
+      button.addEventListener("mouseenter", () => {
+        setPickerSelection(index);
+      });
+      button.addEventListener("click", () => openFile(match.path));
+      item.appendChild(button);
+      pickerResults.appendChild(item);
+    });
+  }
+
+  async function showFilePicker() {
+    if (filePicker) {
+      pickerInput?.focus();
+      return;
+    }
+    const overlay = document.createElement("div");
+    overlay.className = "file-picker";
+    overlay.innerHTML = '<div class="file-picker-dialog" role="dialog" aria-modal="true" aria-label="Open file"><input class="file-picker-input" type="search" placeholder="Search files…" autocomplete="off" spellcheck="false"><ul class="file-picker-results" role="listbox"></ul><p class="file-picker-hint"><kbd>↑</kbd><kbd>↓</kbd> to select <kbd>↵</kbd> to open <kbd>Esc</kbd> to close</p></div>';
+    overlay.addEventListener("mousedown", (event) => {
+      if (event.target === overlay) closeFilePicker();
+    });
+    document.body.appendChild(overlay);
+    filePicker = overlay;
+    pickerInput = overlay.querySelector(".file-picker-input");
+    pickerResults = overlay.querySelector(".file-picker-results");
+    pickerInput.addEventListener("input", () => {
+      pickerSelection = 0;
+      renderFileMatches();
+    });
+    pickerInput.focus();
+    try {
+      const files = await loadFileIndex();
+      if (filePicker !== overlay) return;
+      filePicker.files = files;
+      renderFileMatches();
+    } catch (error) {
+      console.error(error);
+      if (filePicker === overlay && pickerResults) pickerResults.textContent = "Could not load files";
+    }
+  }
 
   function preference() {
     try {
@@ -156,6 +283,7 @@
     eventSource = es;
     es.addEventListener("change", () => {
       if (eventSource !== es) return;
+      fileIndexPromise = null;
       // Directory pages re-render their tree on any change; simplest is reload.
       if (kind === "dir") location.reload();
       else refresh();
@@ -185,6 +313,28 @@
 
   applyTheme(preference());
   themeToggle?.addEventListener("click", toggleTheme);
+  document.addEventListener("keydown", (event) => {
+    if (!filePicker) return;
+    if (event.key === "Escape" || event.key === "Esc") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeFilePicker();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setPickerSelection(pickerSelection + (event.key === "ArrowDown" ? 1 : -1), true);
+    } else if (event.key === "Enter" && pickerMatches[pickerSelection]) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      openFile(pickerMatches[pickerSelection].path);
+    }
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
+      event.preventDefault();
+      showFilePicker();
+    }
+  });
   renderMermaid();
   connect();
   window.addEventListener("pagehide", disconnect);

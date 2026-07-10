@@ -10,6 +10,7 @@ cargo build --release
 ## Features
 
 - **Explorer navigation** — browse directories, open files, follow relative links between docs. Breadcrumbs on every page.
+- **Quick file finder** — press <kbd>⌘K</kbd> (or <kbd>Ctrl+K</kbd>) to fuzzy-search Markdown filenames, then press Enter to open one.
 - **Live reload** — edits appear instantly; scroll position is preserved (only the article body is swapped).
 - **GitHub-flavored markdown** — tables, task lists, footnotes, strikethrough, and GitHub-style alerts (`> [!NOTE]`).
 - **Light and dark themes** — follows your system by default; use the theme button in the header to choose and remember a preference. Syntax highlighting and Mermaid diagrams follow it too.
