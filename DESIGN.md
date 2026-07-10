@@ -57,11 +57,15 @@ Three components share state via `Arc<AppState>`:
 2. **Watcher** — one recursive `notify` watcher on the root dir, debounced (~100ms) to collapse editor write bursts. On change: invalidate cache entry, publish the changed path on a `tokio::sync::broadcast` channel.
 3. **Reload bus** — each open browser tab holds an SSE connection to `/__events`; the handler forwards broadcast events whose path matches the page the tab is viewing (or any path, for the index).
 
-### Routing
+### Routing & navigation
 
-- `GET /` and `GET /some/dir/` → directory index: file tree of `.md` files; if `README.md` or `index.md` exists in that directory, render it below the tree.
+The served directory browses like a file explorer:
+
+- `GET /` and `GET /some/dir/` → directory index: subdirectories and `.md` files as links; if `README.md` or `index.md` exists in that directory, render it below the listing (GitHub repo-view behavior).
 - `GET /notes/foo.md` → rendered page.
 - `GET /notes/img.png` → any non-markdown file is served raw with its MIME type, so relative image links in markdown just work.
+- **Breadcrumbs**: every page — listing or rendered file — shows a `root / notes / foo.md` trail at the top for jumping back up the tree.
+- **Cross-doc links**: relative links between markdown files (`[other](../other.md)`, `[sub](guide/setup.md)`) resolve to their rendered pages, since URLs mirror file paths 1:1 — no link rewriting needed. Links ending in `.md#some-heading` land on the heading anchor. Absolute `http(s)://` links open externally, untouched.
 - `GET /__assets/{app.css,app.js,mermaid.min.js}` → embedded, `Cache-Control: immutable`, content-hashed names.
 - `GET /__events?path=...` → SSE stream.
 
