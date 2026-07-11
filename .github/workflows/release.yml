@@ -18,12 +18,33 @@ jobs:
           - runner: macos-14
             target: aarch64-apple-darwin
             deployment_target: "11.0"
+            binary: mdprev
+            archive: tar.gz
           - runner: macos-15-intel
             target: x86_64-apple-darwin
             deployment_target: "10.12"
+            binary: mdprev
+            archive: tar.gz
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            binary: mdprev
+            archive: tar.gz
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            binary: mdprev
+            archive: tar.gz
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            binary: mdprev.exe
+            archive: zip
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+            binary: mdprev.exe
+            archive: zip
     runs-on: ${{ matrix.runner }}
-    env:
-      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -36,17 +57,28 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           manifest_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
           test "$version" = "$manifest_version"
-      - run: cargo test --locked --target "${{ matrix.target }}"
-      - run: cargo build --locked --release --target "${{ matrix.target }}"
+      - name: Test
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
+        run: cargo test --locked --target "${{ matrix.target }}"
+      - name: Build
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
+        run: cargo build --locked --release --target "${{ matrix.target }}"
       - name: Package binary
         run: |
           mkdir dist
-          tar -C "target/${{ matrix.target }}/release" \
-            -czf "dist/mdprev-${{ matrix.target }}.tar.gz" mdprev
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            powershell.exe -NoProfile -Command \
+              "Compress-Archive -Path 'target/${{ matrix.target }}/release/${{ matrix.binary }}' -DestinationPath 'dist/mdprev-${{ matrix.target }}.zip'"
+          else
+            tar -C "target/${{ matrix.target }}/release" \
+              -czf "dist/mdprev-${{ matrix.target }}.tar.gz" "${{ matrix.binary }}"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: mdprev-${{ matrix.target }}
-          path: dist/mdprev-${{ matrix.target }}.tar.gz
+          path: dist/mdprev-${{ matrix.target }}.${{ matrix.archive }}
           if-no-files-found: error
 
   release:
@@ -64,7 +96,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd dist
-          sha256sum *.tar.gz > SHA256SUMS
+          sha256sum * > SHA256SUMS
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" * \
               --repo "$GITHUB_REPOSITORY" \
