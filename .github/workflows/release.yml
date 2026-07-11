@@ -75,6 +75,14 @@ jobs:
           pattern: mdprev-*
           merge-multiple: true
           path: dist
+      - name: Require tap write token
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          test -n "$HOMEBREW_TAP_TOKEN" || {
+            echo "::error::Set the HOMEBREW_TAP_TOKEN repository secret before releasing."
+            exit 1
+          }
       - uses: actions/checkout@v6
         with:
           repository: neitomic/homebrew-tap
