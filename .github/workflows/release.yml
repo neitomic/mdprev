@@ -143,14 +143,13 @@ jobs:
           class Mdprev < Formula
             desc "Fast, lightweight local Markdown preview server"
             homepage "https://github.com/neitomic/mdprev"
-            version "${version}"
             depends_on :macos
 
             if Hardware::CPU.arm?
-              url "https://github.com/neitomic/mdprev/releases/download/v#{version}/mdprev-aarch64-apple-darwin.tar.gz"
+              url "https://github.com/neitomic/mdprev/releases/download/v${version}/mdprev-aarch64-apple-darwin.tar.gz"
               sha256 "${arm_sha}"
             else
-              url "https://github.com/neitomic/mdprev/releases/download/v#{version}/mdprev-x86_64-apple-darwin.tar.gz"
+              url "https://github.com/neitomic/mdprev/releases/download/v${version}/mdprev-x86_64-apple-darwin.tar.gz"
               sha256 "${intel_sha}"
             end
 
