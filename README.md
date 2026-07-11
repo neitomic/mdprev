@@ -27,3 +27,15 @@ mdprev [DIR]            # directory to serve (default: current directory)
 ```
 
 The server binds `127.0.0.1` only. See [DESIGN.md](DESIGN.md) for architecture.
+
+## Install
+
+```sh
+brew tap neitomic/tap
+brew install mdprev
+```
+
+Releases include native binaries for both Apple Silicon and Intel Macs. To make a
+release, update the version in `Cargo.toml`, push the release commit, then push
+a matching tag (for example, `v0.1.0`). GitHub Actions builds both binaries,
+creates the GitHub release, and updates the Homebrew formula.

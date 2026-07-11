@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Ensure the tag matches Cargo.toml
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          manifest_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
+          test "$version" = "$manifest_version"
+      - run: cargo test --locked
+      - run: cargo build --locked --release
+      - name: Package binary
+        run: |
+          mkdir dist
+          tar -C target/release -czf "dist/mdprev-${{ matrix.target }}.tar.gz" mdprev
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mdprev-${{ matrix.target }}
+          path: dist/mdprev-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mdprev-*
+          merge-multiple: true
+          path: dist
+      - name: Create release and upload binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/*.tar.gz \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi
+
+  update-homebrew:
+    name: Update Homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mdprev-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/checkout@v6
+        with:
+          repository: neitomic/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+          persist-credentials: false
+      - name: Write formula
+        working-directory: homebrew-tap
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          arm_sha="$(sha256sum ../dist/mdprev-aarch64-apple-darwin.tar.gz | awk '{print $1}')"
+          intel_sha="$(sha256sum ../dist/mdprev-x86_64-apple-darwin.tar.gz | awk '{print $1}')"
+          mkdir -p Formula
+          cat > Formula/mdprev.rb <<EOF
+          class Mdprev < Formula
+            desc "Fast, lightweight local Markdown preview server"
+            homepage "https://github.com/neitomic/mdprev"
+            version "${version}"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/neitomic/mdprev/releases/download/v#{version}/mdprev-aarch64-apple-darwin.tar.gz"
+                sha256 "${arm_sha}"
+              end
+
+              on_intel do
+                url "https://github.com/neitomic/mdprev/releases/download/v#{version}/mdprev-x86_64-apple-darwin.tar.gz"
+                sha256 "${intel_sha}"
+              end
+            end
+
+            def install
+              bin.install "mdprev"
+            end
+
+            test do
+              assert_match "Fast local markdown preview server", shell_output("#{bin}/mdprev --help")
+            end
+          end
+          EOF
+      - name: Commit formula update
+        working-directory: homebrew-tap
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/mdprev.rb
+          git diff --cached --quiet || git commit -m "mdprev ${VERSION}"
+          git push "https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/neitomic/homebrew-tap.git" HEAD:main
