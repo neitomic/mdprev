@@ -14,7 +14,7 @@ cargo build --release
 - **Live reload** — edits appear instantly; scroll position is preserved (only the article body is swapped).
 - **GitHub-flavored markdown** — tables, task lists, footnotes, strikethrough, and GitHub-style alerts (`> [!NOTE]`).
 - **Light and dark themes** — follows your system by default; use the theme button in the header to choose and remember a preference. Syntax highlighting and Mermaid diagrams follow it too.
-- **Mermaid diagrams** — ` ```mermaid ` blocks, rendered client-side. The bundle is embedded and lazy-loaded (only on pages that use it).
+- **Mermaid diagrams** — ` ```mermaid ` blocks, rendered client-side with a full-page zoom-and-pan viewer. The bundle is embedded and lazy-loaded (only on pages that use it).
 - **ASCII diagrams** — ` ```bob `, ` ```svgbob `, or ` ```ascii ` blocks are rendered to SVG server-side.
 
 ## Usage

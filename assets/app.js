@@ -10,6 +10,7 @@
   let mermaidLoaded = false;
   let mermaidLoadPromise = null;
   let mermaidObserver = null;
+  let mermaidViewer = null;
   let eventSource = null;
   let reconnectTimer = null;
   let fileIndexPromise = null;
@@ -244,6 +245,184 @@
     applyTheme(next);
   }
 
+  function closeMermaidViewer() {
+    mermaidViewer?.close();
+  }
+
+  function openMermaidViewer(node, trigger) {
+    closeMermaidViewer();
+    const svg = node.querySelector("svg");
+    if (!svg) return;
+
+    const modal = document.createElement("div");
+    modal.className = "mermaid-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.setAttribute("aria-label", "Diagram viewer");
+    const stage = document.createElement("div");
+    stage.className = "mermaid-modal-stage";
+    const canvas = document.createElement("div");
+    canvas.className = "mermaid-modal-canvas";
+    const toolbar = document.createElement("div");
+    toolbar.className = "mermaid-modal-toolbar";
+    toolbar.setAttribute("role", "toolbar");
+    toolbar.setAttribute("aria-label", "Diagram controls");
+    const status = document.createElement("span");
+    status.className = "mermaid-modal-status";
+    status.setAttribute("aria-live", "polite");
+
+    const button = (label, text, action) => {
+      const control = document.createElement("button");
+      control.type = "button";
+      control.className = "mermaid-modal-button";
+      control.setAttribute("aria-label", label);
+      control.title = label;
+      control.textContent = text;
+      control.addEventListener("click", action);
+      return control;
+    };
+
+    const originalStyle = {
+      width: svg.style.width,
+      height: svg.style.height,
+      maxWidth: svg.style.maxWidth,
+      transform: svg.style.transform,
+      transformOrigin: svg.style.transformOrigin,
+    };
+    const viewBox = svg.viewBox?.baseVal;
+    const rendered = svg.getBoundingClientRect();
+    const naturalWidth = viewBox?.width || rendered.width;
+    const naturalHeight = viewBox?.height || rendered.height;
+    let zoom = 1;
+    let panX = 0;
+    let panY = 0;
+    let drag = null;
+
+    const draw = () => {
+      canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoom})`;
+      status.textContent = `${Math.round(zoom * 100)}%`;
+      zoomOut.disabled = zoom <= 0.1;
+      zoomIn.disabled = zoom >= 5;
+    };
+    const centerAt = (nextZoom, clientX, clientY) => {
+      const rect = stage.getBoundingClientRect();
+      const pointX = clientX - rect.left;
+      const pointY = clientY - rect.top;
+      const worldX = (pointX - panX) / zoom;
+      const worldY = (pointY - panY) / zoom;
+      zoom = Math.min(5, Math.max(0.1, nextZoom));
+      panX = pointX - worldX * zoom;
+      panY = pointY - worldY * zoom;
+      draw();
+    };
+    const zoomAtCenter = (factor) => {
+      const rect = stage.getBoundingClientRect();
+      centerAt(zoom * factor, rect.left + rect.width / 2, rect.top + rect.height / 2);
+    };
+    const fit = () => {
+      const rect = stage.getBoundingClientRect();
+      zoom = Math.max(0.1, Math.min((rect.width - 64) / naturalWidth, (rect.height - 64) / naturalHeight, 1));
+      panX = (rect.width - naturalWidth * zoom) / 2;
+      panY = (rect.height - naturalHeight * zoom) / 2;
+      draw();
+    };
+
+    const zoomOut = button("Zoom out", "−", () => zoomAtCenter(0.8));
+    const fitButton = button("Fit diagram to screen", "Fit", fit);
+    const zoomIn = button("Zoom in", "+", () => zoomAtCenter(1.25));
+    const closeButton = button("Close diagram viewer", "×", closeMermaidViewer);
+    closeButton.classList.add("mermaid-modal-close");
+    const onResize = () => fit();
+    const onKeyDown = (event) => {
+      if (event.key === "Escape" || event.key === "Esc") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        closeMermaidViewer();
+      }
+    };
+
+    const close = () => {
+      if (mermaidViewer?.modal !== modal) return;
+      window.removeEventListener("resize", onResize);
+      document.removeEventListener("keydown", onKeyDown, true);
+      Object.assign(svg.style, originalStyle);
+      node.appendChild(svg);
+      modal.remove();
+      document.body.classList.remove("mermaid-modal-open");
+      mermaidViewer = null;
+      if (trigger.isConnected) trigger.focus();
+    };
+    mermaidViewer = { modal, close };
+
+    toolbar.append(zoomOut, status, fitButton, zoomIn, closeButton);
+    canvas.appendChild(svg);
+    stage.appendChild(canvas);
+    modal.append(stage, toolbar);
+    document.body.appendChild(modal);
+    document.body.classList.add("mermaid-modal-open");
+    canvas.style.width = `${naturalWidth}px`;
+    canvas.style.height = `${naturalHeight}px`;
+    svg.style.width = `${naturalWidth}px`;
+    svg.style.height = `${naturalHeight}px`;
+    svg.style.maxWidth = "none";
+    svg.style.transform = "none";
+    fit();
+    window.addEventListener("resize", onResize);
+    document.addEventListener("keydown", onKeyDown, true);
+    closeButton.focus();
+
+    stage.addEventListener("wheel", (event) => {
+      event.preventDefault();
+      centerAt(zoom * (event.deltaY < 0 ? 1.12 : 1 / 1.12), event.clientX, event.clientY);
+    }, { passive: false });
+    stage.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      drag = { id: event.pointerId, x: event.clientX, y: event.clientY, panX, panY };
+      stage.setPointerCapture(event.pointerId);
+      stage.classList.add("is-dragging");
+    });
+    stage.addEventListener("pointermove", (event) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      panX = drag.panX + event.clientX - drag.x;
+      panY = drag.panY + event.clientY - drag.y;
+      draw();
+    });
+    const stopDragging = (event) => {
+      if (!drag || drag.id !== event.pointerId) return;
+      drag = null;
+      stage.classList.remove("is-dragging");
+    };
+    stage.addEventListener("pointerup", stopDragging);
+    stage.addEventListener("pointercancel", stopDragging);
+    modal.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Tab") {
+        const controls = Array.from(toolbar.querySelectorAll("button:not(:disabled)"));
+        const current = controls.indexOf(document.activeElement);
+        const next = event.shiftKey ? current - 1 : current + 1;
+        if (current === -1 || next < 0 || next >= controls.length) {
+          event.preventDefault();
+          controls[event.shiftKey ? controls.length - 1 : 0]?.focus();
+        }
+      }
+    });
+  }
+
+  function enhanceMermaid(node) {
+    if (!node.isConnected || node.closest(".mermaid-viewer")) return;
+    const viewer = document.createElement("div");
+    viewer.className = "mermaid-viewer";
+    const expand = document.createElement("button");
+    expand.type = "button";
+    expand.className = "mermaid-expand";
+    expand.setAttribute("aria-label", "Open diagram viewer");
+    expand.title = "Open diagram viewer";
+    expand.textContent = "⛶";
+    expand.addEventListener("click", () => openMermaidViewer(node, expand));
+    node.before(viewer);
+    viewer.append(node, expand);
+  }
+
   // Load Mermaid only if needed, then render diagrams as they approach the
   // viewport. Rendering several flowcharts at once can otherwise monopolize
   // the browser's main thread on diagram-heavy documents.
@@ -261,7 +440,10 @@
           startOnLoad: false,
           theme: isDark() ? "dark" : "default",
         });
-        window.mermaid.run({ nodes: visible }).catch((e) => console.error("mermaid:", e));
+        window.mermaid
+          .run({ nodes: visible })
+          .then(() => visible.forEach(enhanceMermaid))
+          .catch((e) => console.error("mermaid:", e));
       };
 
       if (!("IntersectionObserver" in window)) {
@@ -321,6 +503,7 @@
       const fresh = doc.querySelector("main");
       const current = document.querySelector("main");
       if (fresh && current) {
+        closeMermaidViewer();
         mermaidObserver?.disconnect();
         mermaidObserver = null;
         current.replaceWith(fresh);
