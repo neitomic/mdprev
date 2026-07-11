@@ -5,8 +5,8 @@ use std::fmt;
 use comrak::adapters::{CodefenceRendererAdapter, SyntaxHighlighterAdapter};
 use comrak::nodes::Sourcepos;
 use comrak::options::Plugins;
-use comrak::{markdown_to_html_with_plugins, Options};
-use syntect::html::{css_for_theme_with_class_style, ClassStyle, ClassedHTMLGenerator};
+use comrak::{Options, markdown_to_html_with_plugins};
+use syntect::html::{ClassStyle, ClassedHTMLGenerator, css_for_theme_with_class_style};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
@@ -52,7 +52,11 @@ impl CodefenceRendererAdapter for BobRenderer {
         code: &str,
         _sourcepos: Option<Sourcepos>,
     ) -> fmt::Result {
-        write!(output, "<div class=\"svgbob\">{}</div>", svgbob::to_svg(code))
+        write!(
+            output,
+            "<div class=\"svgbob\">{}</div>",
+            svgbob::to_svg(code)
+        )
     }
 }
 
@@ -150,14 +154,22 @@ impl Renderer {
 
         let mermaid = MermaidRenderer;
         let bob = BobRenderer;
-        let highlighter = SyntectHighlighter { syntax_set: &self.syntax_set };
+        let highlighter = SyntectHighlighter {
+            syntax_set: &self.syntax_set,
+        };
 
         let mut plugins = Plugins::default();
         for lang in ["mermaid"] {
-            plugins.render.codefence_renderers.insert(lang.to_string(), &mermaid);
+            plugins
+                .render
+                .codefence_renderers
+                .insert(lang.to_string(), &mermaid);
         }
         for lang in ["bob", "svgbob", "ascii"] {
-            plugins.render.codefence_renderers.insert(lang.to_string(), &bob);
+            plugins
+                .render
+                .codefence_renderers
+                .insert(lang.to_string(), &bob);
         }
         plugins.render.codefence_syntax_highlighter = Some(&highlighter);
 
@@ -185,10 +197,19 @@ pub fn page(title: &str, breadcrumbs: &str, body: &str, watch_path: &str, kind: 
 <script src="/__assets/app.js" defer></script>
 </head>
 <body data-path="{path}" data-kind="{kind}">
+<div class="app-shell">
+<aside class="explorer" aria-label="File explorer">
+<header class="explorer-header"><span class="explorer-title"><span class="explorer-title-icon" aria-hidden="true"></span>Explorer</span><button class="explorer-pin" type="button" aria-label="Enable explorer auto-hide" title="Enable explorer auto-hide"><span aria-hidden="true"></span></button></header>
+<div class="explorer-workspace"><span class="explorer-workspace-chevron" aria-hidden="true"></span><span>Markdown</span></div>
+<nav class="explorer-tree" aria-label="Markdown files"><span class="explorer-loading">Loading…</span></nav>
+</aside>
+<div class="page-pane">
 <nav class="crumbs"><span class="crumb-trail">{breadcrumbs}</span><button class="theme-toggle" type="button" aria-label="Toggle color theme" title="Toggle color theme"><span aria-hidden="true">◐</span></button></nav>
 <main class="markdown-body">
 {body}
 </main>
+</div>
+</div>
 </body>
 </html>
 "#,

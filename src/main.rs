@@ -264,31 +264,34 @@ async fn render_dir(state: &AppState, dir: &FsPath, rel: &str) -> Response {
     } else {
         format!("{rel}/")
     };
-    let mut list = String::from("<ul class=\"dir-list\">");
+    let mut list = String::new();
     if !rel.is_empty() {
+        list.push_str("<ul class=\"dir-list\">");
         list.push_str("<li><a href=\"../\"><span class=\"icon\">↩</span><span class=\"name\">..</span></a></li>");
+        for d in &dirs {
+            list.push_str(&format!(
+                "<li><a href=\"/{}{}/\"><span class=\"icon\">📁</span><span class=\"name\">{}</span></a></li>",
+                escape_attr(&base),
+                escape_attr(d),
+                escape_html(d),
+            ));
+        }
+        for f in &files {
+            list.push_str(&format!(
+                "<li><a href=\"/{}{}\"><span class=\"icon\">📄</span><span class=\"name\">{}</span></a></li>",
+                escape_attr(&base),
+                escape_attr(f),
+                escape_html(f),
+            ));
+        }
+        list.push_str("</ul>");
     }
-    for d in &dirs {
-        list.push_str(&format!(
-            "<li><a href=\"/{}{}/\"><span class=\"icon\">📁</span><span class=\"name\">{}</span></a></li>",
-            escape_attr(&base),
-            escape_attr(d),
-            escape_html(d),
-        ));
-    }
-    for f in &files {
-        list.push_str(&format!(
-            "<li><a href=\"/{}{}\"><span class=\"icon\">📄</span><span class=\"name\">{}</span></a></li>",
-            escape_attr(&base),
-            escape_attr(f),
-            escape_html(f),
-        ));
-    }
-    list.push_str("</ul>");
 
     if let Some(readme_path) = readme {
         if let Ok(md) = tokio::fs::read_to_string(&readme_path).await {
-            list.push_str("<hr>");
+            if !rel.is_empty() {
+                list.push_str("<hr>");
+            }
             list.push_str(&state.renderer.render(&md));
         }
     }

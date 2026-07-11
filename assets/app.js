@@ -5,6 +5,8 @@
   const kind = body.dataset.kind || "file";
   const themeToggle = document.querySelector(".theme-toggle");
   const syntaxDarkTheme = document.querySelector("#syntax-dark-theme");
+  const explorerTree = document.querySelector(".explorer-tree");
+  const explorerPin = document.querySelector(".explorer-pin");
   let mermaidLoaded = false;
   let mermaidLoadPromise = null;
   let mermaidObserver = null;
@@ -16,6 +18,74 @@
   let pickerResults = null;
   let pickerMatches = [];
   let pickerSelection = 0;
+
+  function applyExplorerAutoHide(enabled) {
+    document.documentElement.classList.toggle("explorer-auto-hide", enabled);
+    if (!explorerPin) return;
+    explorerPin.setAttribute("aria-pressed", String(!enabled));
+    explorerPin.setAttribute("aria-label", enabled ? "Keep explorer open" : "Enable explorer auto-hide");
+    explorerPin.setAttribute("title", enabled ? "Keep explorer open" : "Enable explorer auto-hide");
+    explorerPin.classList.toggle("is-pinned", !enabled);
+  }
+
+  function toggleExplorerAutoHide() {
+    const enabled = !document.documentElement.classList.contains("explorer-auto-hide");
+    try { localStorage.setItem("mdprev-explorer-auto-hide", String(enabled)); } catch (_) {}
+    applyExplorerAutoHide(enabled);
+  }
+
+  function renderExplorer(files) {
+    if (!explorerTree) return;
+    const root = { directories: new Map(), files: [] };
+    files.forEach((path) => {
+      const parts = path.split("/");
+      const filename = parts.pop();
+      let node = root;
+      parts.forEach((part) => {
+        if (!node.directories.has(part)) node.directories.set(part, { directories: new Map(), files: [] });
+        node = node.directories.get(part);
+      });
+      node.files.push({ name: filename, path });
+    });
+    const currentParts = watchPath.split("/");
+    const build = (node, prefix = "") => {
+      const list = document.createElement("ul");
+      for (const [name, child] of [...node.directories].sort(([a], [b]) => a.localeCompare(b))) {
+        const path = prefix ? `${prefix}/${name}` : name;
+        const item = document.createElement("li");
+        const details = document.createElement("details");
+        details.open = currentParts.slice(0, path.split("/").length).join("/") === path;
+        const summary = document.createElement("summary");
+        summary.textContent = name;
+        details.append(summary, build(child, path));
+        item.appendChild(details);
+        list.appendChild(item);
+      }
+      node.files.sort((a, b) => a.name.localeCompare(b.name)).forEach((file) => {
+        const item = document.createElement("li");
+        const link = document.createElement("a");
+        link.href = "/" + file.path.split("/").map(encodeURIComponent).join("/");
+        link.textContent = file.name;
+        link.title = file.path;
+        if (file.path === watchPath) {
+          link.className = "is-current";
+          link.setAttribute("aria-current", "page");
+        }
+        item.appendChild(link);
+        list.appendChild(item);
+      });
+      return list;
+    };
+    explorerTree.replaceChildren(build(root));
+    explorerTree.querySelector(".is-current")?.scrollIntoView({ block: "nearest" });
+  }
+
+  function loadExplorer() {
+    loadFileIndex().then(renderExplorer).catch((error) => {
+      console.error(error);
+      if (explorerTree) explorerTree.textContent = "Could not load files";
+    });
+  }
 
   function fuzzyScore(path, query) {
     const needle = query.toLocaleLowerCase().replaceAll(/\s+/g, "");
@@ -312,7 +382,11 @@
   }
 
   applyTheme(preference());
+  let explorerAutoHide = false;
+  try { explorerAutoHide = localStorage.getItem("mdprev-explorer-auto-hide") === "true"; } catch (_) {}
+  applyExplorerAutoHide(explorerAutoHide);
   themeToggle?.addEventListener("click", toggleTheme);
+  explorerPin?.addEventListener("click", toggleExplorerAutoHide);
   document.addEventListener("keydown", (event) => {
     if (!filePicker) return;
     if (event.key === "Escape" || event.key === "Esc") {
@@ -336,6 +410,7 @@
     }
   });
   renderMermaid();
+  loadExplorer();
   connect();
   window.addEventListener("pagehide", disconnect);
   window.addEventListener("pageshow", (event) => {
