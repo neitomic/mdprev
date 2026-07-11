@@ -17,23 +17,32 @@ jobs:
         include:
           - runner: macos-14
             target: aarch64-apple-darwin
+            deployment_target: "11.0"
           - runner: macos-15-intel
             target: x86_64-apple-darwin
+            deployment_target: "10.12"
     runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.deployment_target }}
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
+      - name: Verify native build architecture
+        run: |
+          host="$(rustc -vV | sed -n 's/^host: //p')"
+          test "$host" = "${{ matrix.target }}"
       - name: Ensure the tag matches Cargo.toml
         run: |
           version="${GITHUB_REF_NAME#v}"
           manifest_version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
           test "$version" = "$manifest_version"
-      - run: cargo test --locked
-      - run: cargo build --locked --release
+      - run: cargo test --locked --target "${{ matrix.target }}"
+      - run: cargo build --locked --release --target "${{ matrix.target }}"
       - name: Package binary
         run: |
           mkdir dist
-          tar -C target/release -czf "dist/mdprev-${{ matrix.target }}.tar.gz" mdprev
+          tar -C "target/${{ matrix.target }}/release" \
+            -czf "dist/mdprev-${{ matrix.target }}.tar.gz" mdprev
       - uses: actions/upload-artifact@v4
         with:
           name: mdprev-${{ matrix.target }}
@@ -54,12 +63,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          cd dist
+          sha256sum *.tar.gz > SHA256SUMS
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz \
+            gh release upload "$GITHUB_REF_NAME" * \
               --repo "$GITHUB_REPOSITORY" \
               --clobber
           else
-            gh release create "$GITHUB_REF_NAME" dist/*.tar.gz \
+            gh release create "$GITHUB_REF_NAME" * \
               --repo "$GITHUB_REPOSITORY" \
               --title "$GITHUB_REF_NAME" \
               --generate-notes
